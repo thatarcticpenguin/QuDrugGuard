@@ -7,6 +7,8 @@ import io
 import itertools
 import re
 import time
+import google.generativeai as genai
+from deep_translator import GoogleTranslator
 from pathlib import Path
 
 import pandas as pd
@@ -678,9 +680,54 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
   .rx-summary-strip { grid-template-columns: 1fr; }
   .result-banner { grid-template-columns: 36px 1fr; gap: .75rem; }
 }
+/* Custom Language Dropdown for Nav Bar */
+.st-key-qdg-nav-row [data-testid="stSelectbox"] > div > div {
+  background: transparent !important;
+  border: 1px solid rgba(255,255,255,0.2) !important;
+  color: #fff !important;
+  min-height: 30px !important;
+  height: 30px !important;
+  border-radius: 20px !important;
+}
+.st-key-qdg-nav-row [data-testid="stSelectbox"] svg { fill: #fff !important; }
 </style>
 """
 
+# ── TRANSLATION ENGINE ────────────────────────────────────────────────────────
+# ── DYNAMIC TRANSLATION ENGINE (GOOGLE TRANSLATE) ─────────────────────────────
+
+# ── DYNAMIC TRANSLATION ENGINE (DEEP TRANSLATOR) ─────────────────────────────
+
+BASE_TEXT = {
+    "nav_landing": "Home", "nav_checker": "Drug Checker", "nav_prescription": "Rx Scanner", "nav_history": "History",
+    "hero_tag": "Quantum Pharmacology",
+    "hero_title": "QuDrugGuard",
+    "hero_sub": "Check drug interactions with quantum-assisted analysis and clear mechanistic explanations for each result.",
+    "btn_start": "Get Started",
+    "auth_title": "Sign in to QuDrugGuard",
+    "auth_sub": "Access the drug interaction checker and your full check history.",
+    "tab_signin": "Sign in", "tab_signup": "Create account",
+    "ai_btn": "💬 AI Assistant"
+}
+
+@st.cache_data(show_spinner=False)
+def get_ui_translations(target_lang: str) -> dict:
+    if target_lang == "en":
+        return BASE_TEXT
+    try:
+        translator = GoogleTranslator(source='en', target=target_lang)
+        translated = {}
+        for k, v in BASE_TEXT.items():
+            translated[k] = translator.translate(v)
+        return translated
+    except Exception as e:
+        print(f"Translation API error: {e}")
+        return BASE_TEXT
+
+def _t(key: str) -> str:
+    lang = st.session_state.get("lang", "en")
+    texts = get_ui_translations(lang)
+    return texts.get(key, BASE_TEXT.get(key, key))
 # ── HELPERS ──────────────────────────────────────────────────────────────────
 
 def _has_dep(module: str) -> bool:
@@ -814,17 +861,18 @@ def boot_session() -> None:
         "user":            None,
         "selected_a":      None,
         "selected_b":      None,
-        "cat_a":           "All Categories",  # <-- ADD THIS
-        "cat_b":           "All Categories",  # <-- ADD THIS
+        "cat_a":           "All Categories",
+        "cat_b":           "All Categories",
         "prediction":      None,
         "rx_drugs":        None,
         "rx_results":      None,
         "rx_unmatched":    None,
         "scroll_to_login": False,
+        "lang":            "en",       # <-- NEW: Language Tracker
+        "chat_history":    [],         # <-- NEW: AI Chat Tracker
     }
     for key, val in defaults.items():
         st.session_state.setdefault(key, val)
-
 # ── CACHED DATA ───────────────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
@@ -846,29 +894,88 @@ def get_all_drugs() -> list[str]:
 
 # ── NAVIGATION BAR ────────────────────────────────────────────────────────────
 
+# ── AI CHATBOT DIALOG ─────────────────────────────────────────────────────────
+# ── AI CHATBOT DIALOG (POWERED BY GEMINI) ─────────────────────────────────────
+@st.dialog("💬 QuDrug AI Assistant")
+def chatbot_dialog():
+    st.caption("Powered by Gemini AI")
+    
+    # Render chat history
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            
+    # Chat input
+    if prompt := st.chat_input("Ask me about drugs, side effects, or interactions..."):
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+            
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            message_placeholder.markdown("*(Analyzing medical data...)*")
+            
+            try:
+                # --- ENTER YOUR FREE GEMINI API KEY HERE ---
+                API_KEY = "AIzaSyAaa_tMBCxO2mi_m94n0N1bXwjU7KUxp6U"
+                
+                if API_KEY == "AIzaSyDPmSKfXcA93B52jX247ijOOX5RtrPuqzE":
+                    ai_reply = "⚠️ **Setup Required:** I am ready to answer, but you need to paste your Free Gemini API Key into the `app.py` file first! Get one at aistudio.google.com"
+                else:
+                    genai.configure(api_key=API_KEY)
+                    
+                    # --- THE BULLETPROOF MODEL SELECTOR ---
+                    # Ask Google for a list of all currently active models for your key
+                    valid_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                    
+                    # Auto-select the best available model (prefers 1.5-flash, falls back to whatever is active)
+                    best_model = next((m for m in valid_models if '1.5-flash' in m), valid_models[0])
+                    
+                    model = genai.GenerativeModel(best_model)
+                    
+                    # Pass the chat history to the AI so it remembers the conversation
+                    history = [{"role": "user" if m["role"]=="user" else "model", "parts": [m["content"]]} for m in st.session_state.chat_history[:-1]]
+                    chat = model.start_chat(history=history)
+                    
+                    # Force the AI to act like a medical assistant
+                    response = chat.send_message(f"You are a clinical AI assistant for QuDrugGuard. Answer concisely and professionally. User says: {prompt}")
+                    ai_reply = response.text
+                    
+                message_placeholder.markdown(ai_reply)
+                st.session_state.chat_history.append({"role": "assistant", "content": ai_reply})
+                
+            except Exception as e:
+                error_msg = f"⚠️ API Error: {e}"
+                message_placeholder.markdown(error_msg)
+                st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
+
+
+# ── NAVIGATION BAR ────────────────────────────────────────────────────────────
 def nav_bar() -> None:
     user    = st.session_state.user
     current = st.session_state.page
 
-    nav_options = [("landing", "Home")]
+    # Translated Nav Links
+    nav_options = [("landing", _t("nav_landing"))]
     if user:
         nav_options += [
-            ("checker", "Drug Checker"),
-            ("prescription", "Rx Scanner"),
-            ("history", "History"),
+            ("checker", _t("nav_checker")),
+            ("prescription", _t("nav_prescription")),
+            ("history", _t("nav_history")),
         ]
 
-    # Calculate column widths. Add an extra column for the profile popover if logged in.
-    n_cols = 1 + len(nav_options) + (1 if user else 0)
+    # Calculate column widths: Logo | Navs | Chat | Lang | Profile
+    n_cols = 1 + len(nav_options) + 2 + (1 if user else 0)
     logo_w = 1.8
     btn_w  = [0.6] * len(nav_options)
+    extras_w = [0.85, 0.65] # Chat button and Lang selector
     profile_w = [0.5] if user else []
-    col_widths = [logo_w] + btn_w + profile_w
+    col_widths = [logo_w] + btn_w + extras_w + profile_w
 
     with st.container(key="qdg-nav-row"):
         cols = st.columns(col_widths, gap="small")
 
-        # Column 0 — Logo
+        # Logo
         cols[0].markdown(
             "<p style='margin:0;padding:.3rem .5rem;font-size:.95rem;font-weight:700;"
             "color:#fff;letter-spacing:-.01em;white-space:nowrap;'>"
@@ -878,7 +985,7 @@ def nav_bar() -> None:
             unsafe_allow_html=True,
         )
 
-        # Columns 1..N — Nav Buttons
+        # Nav Buttons
         for col, (key, label) in zip(cols[1:len(nav_options)+1], nav_options):
             is_active = key == current
             if is_active:
@@ -891,44 +998,47 @@ def nav_bar() -> None:
             if is_active:
                 col.markdown("</div>", unsafe_allow_html=True)
                 
-        # Last Column — Profile Dropdown / Logout (Only visible if user is logged in)
-        if user:
-            with cols[-1]:
-                first_name = user['full_name'].split()[0]
-                with st.popover(f"👤 {first_name}"):
-                    st.markdown(f"**{user['full_name']}**")
-                    st.caption(f"@{user['username']}")
-                    st.divider()
-                    
-                    if st.button("Sign out", use_container_width=True, type="primary"):
-                        # Clear all session states on logout
-                        st.session_state.user = None
-                        st.session_state.page = "landing"
-                        st.session_state.selected_a = None
-                        st.session_state.selected_b = None
-                        st.session_state.prediction = None
-                        st.session_state.rx_drugs = None
-                        st.session_state.rx_results = None
-                        st.session_state.rx_unmatched = None
-                        st.rerun()
+        # Chatbot Trigger Button
+        with cols[-2 if not user else -3]:
+            if st.button(_t("ai_btn"), key="nav_ai_chat"):
+                chatbot_dialog()
 
+        # Dynamic Google Translate Language Dropdown (107 Languages)
+        # Dynamic Language Dropdown (100+ Languages)
+        with cols[-1 if not user else -2]:
+            try:
+                lang_dict = GoogleTranslator().get_supported_languages(as_dict=True)
+                lang_opts = {v: k.title() for k, v in lang_dict.items()} # Maps 'es' -> 'Spanish'
+            except:
+                lang_opts = {"en": "English", "es": "Spanish", "hi": "Hindi", "fr": "French"}
+                
+            lang_keys = list(lang_opts.keys())
+            if "en" not in lang_keys: lang_keys.insert(0, "en")
+
+            sel_lang = st.selectbox(
+                "Lang",
+                options=lang_keys,
+                index=lang_keys.index(st.session_state.lang) if st.session_state.lang in lang_keys else lang_keys.index("en"),
+                format_func=lambda x: f"{x.upper()} - {lang_opts.get(x, x)[:8]}",
+                label_visibility="collapsed",
+                key="lang_selector"
+            )
+            # If user changes language, refresh the app instantly
+            if sel_lang != st.session_state.lang:
+                st.session_state.lang = sel_lang
+                st.rerun()
 # ── LANDING SCREEN ────────────────────────────────────────────────────────────
 
 def landing_screen() -> None:
     st.markdown(
-        """
+        f"""
         <div class="landing-hero">
           <div class="hero-tag">
-            <svg width="6" height="6" viewBox="0 0 6 6" fill="currentColor">
-              <circle cx="3" cy="3" r="3"/>
-            </svg>
-            Quantum Pharmacology
+            <svg width="6" height="6" viewBox="0 0 6 6" fill="currentColor"><circle cx="3" cy="3" r="3"/></svg>
+            {_t('hero_tag')}
           </div>
-          <div class="landing-title">QuDrugGuard</div>
-          <p class="landing-sub">
-            Check drug interactions with quantum-assisted analysis and clear
-            mechanistic explanations for each result.
-          </p>
+          <div class="landing-title">{_t('hero_title')}</div>
+          <p class="landing-sub">{_t('hero_sub')}</p>
         </div>
         <div id="landing-login-anchor"></div>
         """,
@@ -937,7 +1047,7 @@ def landing_screen() -> None:
 
     _, cta_col, _ = st.columns([2, 1, 2])
     with cta_col:
-        clicked = st.button("Get Started", key="cta_btn", use_container_width=True)
+        clicked = st.button(_t("btn_start"), key="cta_btn", use_container_width=True)
 
     if clicked:
         st.session_state.scroll_to_login = True
@@ -956,6 +1066,20 @@ def landing_screen() -> None:
             </script>""",
             unsafe_allow_html=True,
         )
+
+# ── AUTH SCREEN ───────────────────────────────────────────────────────────────
+
+def auth_screen() -> None:
+    st.markdown(
+        f'<div class="pg-head">'
+        f'<h1>{_t("auth_title")}</h1>'
+        f'<p>{_t("auth_sub")}</p>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    _, centre, _ = st.columns([1, 1.8, 1], gap="small")
+    with centre:
+        _auth_form_ui(card_class="auth-card")
 
 
 # ── AUTH SCREEN ───────────────────────────────────────────────────────────────
