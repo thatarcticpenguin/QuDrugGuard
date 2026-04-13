@@ -79,33 +79,6 @@ footer { display: none !important; }
   margin: 0 auto !important;
 }
 
-/* ── Navigation Bar ─────────────────────────────────────────────── */
-/* Nav button overrides are placed AFTER the global .stButton rule below */
-
-/* Online badge */
-.qdg-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: rgba(200,25,42,.15);
-  border: 1px solid rgba(200,25,42,.3);
-  border-radius: 20px;
-  padding: .22rem .75rem;
-  font-size: .72rem;
-  font-weight: 500;
-  color: #ffb3ba;
-  white-space: nowrap;
-}
-.qdg-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--red);
-  flex-shrink: 0;
-  animation: blink 2.2s ease infinite;
-}
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
-
 /* ── Section / Page Headings ────────────────────────────────────── */
 .pg-head { margin-bottom: 1.75rem; }
 .pg-head h1 {
@@ -516,7 +489,19 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
   padding-top: 0 !important;
   padding-bottom: 0 !important;
 }
-/* Beat the global rule with same selector + .st-key ancestor */
+/* Active page button */
+.st-key-qdg-nav-row .nav-active .stButton > button {
+  background: rgba(200,25,42,.25) !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+}
+.st-key-qdg-nav-row .nav-active .stButton > button p {
+  color: #fff !important;
+  font-weight: 600 !important;
+}
+.st-key-qdg-nav-row .stButton { width: auto !important; }
+
+/* Nav Buttons */
 .st-key-qdg-nav-row .stButton > button {
   background: transparent !important;
   border: none !important;
@@ -549,17 +534,31 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
   outline: none !important;
   border: none !important;
 }
-/* Active page button */
-.st-key-qdg-nav-row .nav-active .stButton > button {
-  background: rgba(200,25,42,.25) !important;
+
+/* POPOVER PROFILE BUTTON OVERRIDES */
+.st-key-qdg-nav-row [data-testid="stPopover"] > button {
+  background: transparent !important;
+  border: 1px solid rgba(255,255,255,0.2) !important;
+  box-shadow: none !important;
   color: #fff !important;
-  font-weight: 600 !important;
+  font-size: .8rem !important;
+  font-weight: 500 !important;
+  min-height: unset !important;
+  height: 30px !important;
+  padding: 0 .75rem !important;
+  border-radius: 20px !important;
+  width: auto !important;
+  transition: background .12s, color .12s !important;
 }
-.st-key-qdg-nav-row .nav-active .stButton > button p {
+.st-key-qdg-nav-row [data-testid="stPopover"] > button p {
   color: #fff !important;
-  font-weight: 600 !important;
+  font-weight: 500 !important;
 }
-.st-key-qdg-nav-row .stButton { width: auto !important; }
+.st-key-qdg-nav-row [data-testid="stPopover"] > button:hover {
+  background: rgba(255,255,255,0.1) !important;
+  color: #fff !important;
+}
+
 
 .stTextInput input {
   font-family: 'DM Sans', sans-serif !important;
@@ -815,6 +814,8 @@ def boot_session() -> None:
         "user":            None,
         "selected_a":      None,
         "selected_b":      None,
+        "cat_a":           "All Categories",  # <-- ADD THIS
+        "cat_b":           "All Categories",  # <-- ADD THIS
         "prediction":      None,
         "rx_drugs":        None,
         "rx_results":      None,
@@ -823,7 +824,6 @@ def boot_session() -> None:
     }
     for key, val in defaults.items():
         st.session_state.setdefault(key, val)
-
 
 # ── CACHED DATA ───────────────────────────────────────────────────────────────
 
@@ -844,6 +844,8 @@ def get_all_drugs() -> list[str]:
 
 # ── NAVIGATION BAR ────────────────────────────────────────────────────────────
 
+# ── NAVIGATION BAR ────────────────────────────────────────────────────────────
+
 def nav_bar() -> None:
     user    = st.session_state.user
     current = st.session_state.page
@@ -856,21 +858,17 @@ def nav_bar() -> None:
             ("history", "History"),
         ]
 
-    # Key insight: we cannot wrap Streamlit widgets in HTML divs.
-    # Instead we give the nav row a unique data-testid via st.container(key=...)
-    # then use CSS to style that specific container dark.
-    # The logo is injected as the FIRST column (narrow), buttons fill the rest.
-
-    n_cols = 1 + len(nav_options)          # logo col + one per nav item
+    # Calculate column widths. Add an extra column for the profile popover if logged in.
+    n_cols = 1 + len(nav_options) + (1 if user else 0)
     logo_w = 1.8
     btn_w  = [0.6] * len(nav_options)
-    col_widths = [logo_w] + btn_w
+    profile_w = [0.5] if user else []
+    col_widths = [logo_w] + btn_w + profile_w
 
-    # Render the nav as a keyed container so we can target it with CSS
     with st.container(key="qdg-nav-row"):
         cols = st.columns(col_widths, gap="small")
 
-        # Column 0 — logo (markdown, not a button)
+        # Column 0 — Logo
         cols[0].markdown(
             "<p style='margin:0;padding:.3rem .5rem;font-size:.95rem;font-weight:700;"
             "color:#fff;letter-spacing:-.01em;white-space:nowrap;'>"
@@ -880,8 +878,8 @@ def nav_bar() -> None:
             unsafe_allow_html=True,
         )
 
-        # Columns 1..N — nav buttons
-        for col, (key, label) in zip(cols[1:], nav_options):
+        # Columns 1..N — Nav Buttons
+        for col, (key, label) in zip(cols[1:len(nav_options)+1], nav_options):
             is_active = key == current
             if is_active:
                 col.markdown('<div class="nav-active">', unsafe_allow_html=True)
@@ -892,7 +890,27 @@ def nav_bar() -> None:
                 st.rerun()
             if is_active:
                 col.markdown("</div>", unsafe_allow_html=True)
-
+                
+        # Last Column — Profile Dropdown / Logout (Only visible if user is logged in)
+        if user:
+            with cols[-1]:
+                first_name = user['full_name'].split()[0]
+                with st.popover(f"👤 {first_name}"):
+                    st.markdown(f"**{user['full_name']}**")
+                    st.caption(f"@{user['username']}")
+                    st.divider()
+                    
+                    if st.button("Sign out", use_container_width=True, type="primary"):
+                        # Clear all session states on logout
+                        st.session_state.user = None
+                        st.session_state.page = "landing"
+                        st.session_state.selected_a = None
+                        st.session_state.selected_b = None
+                        st.session_state.prediction = None
+                        st.session_state.rx_drugs = None
+                        st.session_state.rx_results = None
+                        st.session_state.rx_unmatched = None
+                        st.rerun()
 
 # ── LANDING SCREEN ────────────────────────────────────────────────────────────
 
@@ -996,6 +1014,8 @@ def _auth_form_ui(card_class: str = "auth-card") -> None:
 
 # ── DRUG CHECKER SCREEN ───────────────────────────────────────────────────────
 
+# ── DRUG CHECKER SCREEN ───────────────────────────────────────────────────────
+
 def checker_screen() -> None:
     user  = st.session_state.user
     first = user["full_name"].split()[0]
@@ -1008,8 +1028,6 @@ def checker_screen() -> None:
         unsafe_allow_html=True,
     )
 
-    drugs = get_all_drugs()
-
     st.markdown(
         '<div style="background:#111318;border-radius:10px 10px 0 0;padding:.6rem 1.1rem;'
         'display:flex;align-items:center;gap:.5rem;">'
@@ -1020,24 +1038,41 @@ def checker_screen() -> None:
         unsafe_allow_html=True,
     )
 
+    catalog = get_drug_catalog()
+    all_cats = ["All Categories"] + list(catalog.keys())
+
     with st.container(border=True):
         left, right = st.columns(2, gap="large")
 
         with left:
-            sel_a_index = drugs.index(st.session_state.selected_a) if st.session_state.selected_a in drugs else None
-            st.session_state.selected_a = st.selectbox(
-                "Drug A", options=drugs,
-                index=sel_a_index,
-                placeholder="Select first drug…",
-            )
+            st.selectbox("Filter Category A", options=all_cats, key="cat_a")
+            if st.session_state.cat_a == "All Categories":
+                drugs_a = get_all_drugs()
+            else:
+                drugs_a = sorted([d["name"] for d in catalog[st.session_state.cat_a]])
+                
+            sel_a_index = drugs_a.index(st.session_state.selected_a) if st.session_state.selected_a in drugs_a else None
+            new_a = st.selectbox("Drug A", options=drugs_a, index=sel_a_index, placeholder="Select first drug…")
+            
+            # Clear old prediction if the user changes the drug
+            if new_a != st.session_state.selected_a:
+                st.session_state.prediction = None
+            st.session_state.selected_a = new_a
 
         with right:
-            sel_b_index = drugs.index(st.session_state.selected_b) if st.session_state.selected_b in drugs else None
-            st.session_state.selected_b = st.selectbox(
-                "Drug B", options=drugs,
-                index=sel_b_index,
-                placeholder="Select second drug…",
-            )
+            st.selectbox("Filter Category B", options=all_cats, key="cat_b")
+            if st.session_state.cat_b == "All Categories":
+                drugs_b = get_all_drugs()
+            else:
+                drugs_b = sorted([d["name"] for d in catalog[st.session_state.cat_b]])
+                
+            sel_b_index = drugs_b.index(st.session_state.selected_b) if st.session_state.selected_b in drugs_b else None
+            new_b = st.selectbox("Drug B", options=drugs_b, index=sel_b_index, placeholder="Select second drug…")
+            
+            # Clear old prediction if the user changes the drug
+            if new_b != st.session_state.selected_b:
+                st.session_state.prediction = None
+            st.session_state.selected_b = new_b
 
         run_prediction = False
         if st.session_state.selected_a and st.session_state.selected_b:
@@ -1061,10 +1096,9 @@ def checker_screen() -> None:
 
             _, btn_col, _ = st.columns([2, 2, 2], gap="small")
             with btn_col:
-                run_prediction = st.button(
-                    "Run Quantum Prediction", key="run_pred", use_container_width=True
-                )
+                run_prediction = st.button("Run Quantum Prediction", key="run_pred", use_container_width=True)
 
+    # --- THIS IS THE PREDICTION BLOCK THAT LIKELY GOT DELETED ---
     if run_prediction and st.session_state.selected_a and st.session_state.selected_b:
         st.markdown('<div class="gap-sm"></div>', unsafe_allow_html=True)
         prog = st.progress(0)
@@ -1110,7 +1144,6 @@ def checker_screen() -> None:
 
     if st.session_state.prediction:
         _render_prediction(st.session_state.prediction)
-
 
 def _render_prediction(result: dict) -> None:
     """Render the prediction result banner, score grid, drivers, and charts."""
